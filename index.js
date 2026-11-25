@@ -1,143 +1,257 @@
-const { Bot, InlineKeyboard, InputFile } = require("grammy");
-const path = require("path");
 
-const TOKEN = process.env.BOT_TOKEN;
+const { Bot, InlineKeyboard, Keyboard } = require("grammy");
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const OWNER_ID = Number(process.env.OWNER_ID);
+
+if (!BOT_TOKEN || !OWNER_ID) {
+  throw new Error("BOT_TOKEN or OWNER_ID is missing!");
+}
+
+const bot = new Bot(BOT_TOKEN);
+
+const OWNER_USERNAME = "VILLENYOURPAPA";
 
 const CHANNELS = [
-  { name: "VILLEN X PAPA OFFICIAL", id: "@villenxpapaof", link: "https://t.me/villenxpapaof" },
-  { name: "VILLEN x PAPA", id: "@villenxpapa", link: "https://t.me/villenxpapa" },
-  { name: "VILLEN X PAPA BACK-UP", id: "@villenxpapabk", link: "https://t.me/villenxpapabk" },
+  "@villenxpapaof",
+  "@villenxpapa",
+  "@villenxpapabk"
 ];
 
-if (!TOKEN) {
-  console.error("BOT_TOKEN is missing.");
-  process.exit(1);
+let maintenance = false;
+const activity = new Map();
+const maintenanceNotified = new Set();
+
+function userInfo(ctx) {
+  const u = ctx.from;
+
+  return {
+    id: u.id,
+    name: [u.first_name, u.last_name]
+      .filter(Boolean)
+      .join(" "),
+    username: u.username ? `@${u.username}` : "No username"
+  };
 }
 
-const bot = new Bot(TOKEN);
-const sessions = new Map();
+async function notifyOwner(ctx, action) {
+  const u = userInfo(ctx);
+  const now = Date.now();
 
-const mainMenu = new InlineKeyboard()
-  .text("Number Temporary Ban", "nt")
-  .row()
-  .text("Number Permanent Ban", "np")
-  .row()
-  .text("Group Temporary Suspension", "gt")
-  .row()
-  .text("Group Permanent Suspension", "gp");
+  let record = activity.get(u.id);
 
-function channelKeyboard() {
-  const keyboard = new InlineKeyboard();
-
-  CHANNELS.forEach((channel) => {
-    keyboard.url(channel.name, channel.link).row();
-  });
-
-  keyboard.text("Check Membership", "verify");
-  return keyboard;
-}
-
-async function checkMembership(ctx) {
-  for (const channel of CHANNELS) {
-    try {
-      const member = await ctx.api.getChatMember(channel.id, ctx.from.id);
-
-      if (!["member", "administrator", "creator"].includes(member.status)) {
-        return false;
-      }
-    } catch (error) {
-      console.error(error.message);
-      return false;
-    }
+  if (!record) {
+    record = { first: now, last: now };
+    activity.set(u.id, record);
+  } else {
+    record.last = now;
   }
 
-  return true;
+  const duration = Math.floor(
+    (record.last - record.first) / 1000
+  );
+
+  const message =
+    `🔔 User Activity\n\n` +
+    `👤 Name: ${u.name}\n` +
+    `🔗 Username: ${u.username}\n` +
+    `🆔 User ID: ${u.id}\n` +
+    `📅 First: ${new Date(record.first).toLocaleString()}\n` +
+    `🕒 Last: ${new Date(record.last).toLocaleString()}\n` +
+    `⏱ Duration: ${duration} seconds\n` +
+    `📌 Activity: ${action}`;
+
+  try {
+    await bot.api.sendMessage(OWNER_ID, message);
+  } catch (e) {
+    console.error("Notification error:", e.message);
+  }
+}
+
+async function checkJoined(ctx) {
+  try {
+    for (const channel of CHANNELS) {
+      const member = await bot.api.getChatMember(
+        channel,
+        ctx.from.id
+      );
+
+      if (
+        member.status === "left" ||
+        member.status === "kicked"
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (e) {
+    console.error("Join check error:", e.message);
+    return false;
+  }
+}
+
+function joinButtons() {
+  return new InlineKeyboard()
+    .url("Join Channel 1", "https://t.me/villenxpapaof")
+    .row()
+    .url("Join Channel 2", "https://t.me/villenxpapa")
+    .row()
+    .url("Join Channel 3", "https://t.me/villenxpapabk")
+    .row()
+    .text("✅ Verify Join", "verify_join");
+}
+
+function mainMenu() {
+  return new Keyboard()
+    .text("Number Temporary Ban")
+    .text("Number Permanent Ban")
+    .row()
+    .text("Group Suspend Temporary")
+    .text("Group Suspend Permanent")
+    .resized();
+}
+
+async function maintenanceReply(ctx) {
+  const u = userInfo(ctx);
+
+  // Avoid repeated maintenance alerts for the same user
+  if (!maintenanceNotified.has(u.id)) {
+    maintenanceNotified.add(u.id);
+    await notifyOwner(ctx, "Tried to use bot during maintenance");
+  }
+
+  return ctx.reply(
+    "🛠️ Bot is under maintenance.\n\nPlease contact our owner.",
+    {
+      reply_markup: new InlineKeyboard()
+        .url(
+          "📞 Contact Owner",
+          `https://t.me/${OWNER_USERNAME}`
+        )
+    }
+  );
+}
+
+async function showJoinMessage(ctx) {
+  return ctx.reply(
+    "📢 Join all 3 channels to continue.",
+    { reply_markup: joinButtons() }
+  );
+}
+
+async function showMenu(ctx) {
+  return ctx.reply(
+    "Welcome! Select an option:",
+    { reply_markup: mainMenu() }
+  );
 }
 
 bot.command("start", async (ctx) => {
-  sessions.delete(ctx.from.id);
-
-  await ctx.replyWithPhoto(
-    new InputFile(path.join(__dirname, "welcome.jpeg.jpeg")),
-    {
-      caption:
-        "👑 VILLEN OWNER 👑\n\n" +
-        "⚡ SELECT AN OPTION ⚡",
-      reply_markup: mainMenu
-    }
-  );
-});
-
-bot.command("cancel", async (ctx) => {
-  sessions.delete(ctx.from.id);
-  await ctx.reply("Cancelled. Send /start to begin again.");
-});
-
-bot.callbackQuery(["nt", "np", "gt", "gp"], async (ctx) => {
-  await ctx.answerCallbackQuery();
-
-  const type = ctx.callbackQuery.data;
-
-  sessions.set(ctx.from.id, {
-    type,
-    stage: "input"
-  });
-
-  if (type === "nt" || type === "np") {
-    await ctx.reply("📱 Please enter the WhatsApp number.");
-  } else {
-    await ctx.reply("🔗 Please enter the WhatsApp group invite link.");
-  }
-});
-
-bot.on("message:text", async (ctx) => {
-  const session = sessions.get(ctx.from.id);
-
-  if (!session || session.stage !== "input") return;
-
-  if (ctx.message.text.startsWith("/")) return;
-
-  session.input = ctx.message.text.trim();
-  session.stage = "channels";
-
-  await ctx.reply(
-    "🔐 Join all three channels and verify membership:",
-    { reply_markup: channelKeyboard() }
-  );
-});
-
-bot.callbackQuery("verify", async (ctx) => {
-  await ctx.answerCallbackQuery();
-
-  const session = sessions.get(ctx.from.id);
-
-  if (!session || session.stage !== "channels") {
-    return ctx.reply("Please start again using /start.");
-  }
-
-  const joined = await checkMembership(ctx);
-
-  if (!joined) {
+  if (ctx.from.id === OWNER_ID) {
     return ctx.reply(
-      "Please join all three channels first.",
-      { reply_markup: channelKeyboard() }
+      `👑 Owner Panel\n\nMaintenance: ${maintenance ? "ON" : "OFF"}\n\n` +
+      "/maintenance_on\n" +
+      "/maintenance_off"
     );
   }
 
-  sessions.delete(ctx.from.id);
+  if (maintenance) {
+    return maintenanceReply(ctx);
+  }
 
-  await ctx.reply(
-    "🔴 STATUS: UNDER PROCESSING\n\n" +
-    "⏳ Your request is currently under processing.\n" +
-    "🕒 Estimated processing time: 24 hours.\n\n" +
-    "ℹ️ This is a status-tracking message, not a WhatsApp enforcement action."
+  await notifyOwner(ctx, "/start");
+
+  if (!(await checkJoined(ctx))) {
+    return showJoinMessage(ctx);
+  }
+
+  return showMenu(ctx);
+});
+
+// Owner-only maintenance controls
+
+bot.command("maintenance_on", async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) {
+    return ctx.reply("⛔ Owner only.");
+  }
+
+  maintenance = true;
+  maintenanceNotified.clear();
+
+  return ctx.reply("🛠️ Maintenance is ON.");
+});
+
+bot.command("maintenance_off", async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) {
+    return ctx.reply("⛔ Owner only.");
+  }
+
+  maintenance = false;
+  maintenanceNotified.clear();
+
+  return ctx.reply("✅ Maintenance is OFF.");
+});
+
+// Join verification
+
+bot.callbackQuery("verify_join", async (ctx) => {
+  await ctx.answerCallbackQuery();
+
+  if (maintenance && ctx.from.id !== OWNER_ID) {
+    return maintenanceReply(ctx);
+  }
+
+  if (!(await checkJoined(ctx))) {
+    return ctx.reply("❌ You haven't joined all channels yet.");
+  }
+
+  await notifyOwner(ctx, "Verified channel membership");
+
+  return showMenu(ctx);
+});
+
+// Four menu options
+
+const menuOptions = [
+  "Number Temporary Ban",
+  "Number Permanent Ban",
+  "Group Suspend Temporary",
+  "Group Suspend Permanent"
+];
+
+bot.hears(menuOptions, async (ctx) => {
+  if (ctx.from.id !== OWNER_ID && maintenance) {
+    return maintenanceReply(ctx);
+  }
+
+  if (ctx.from.id !== OWNER_ID) {
+    await notifyOwner(ctx, `Selected: ${ctx.message.text}`);
+
+    if (!(await checkJoined(ctx))) {
+      return showJoinMessage(ctx);
+    }
+  }
+
+  return ctx.reply(
+    "تنبيه: لا يستطيع هذا البوت تنفيذ حظر الأرقام أو تعليق مجموعات واتساب مباشرةً. يُرجى استخدام أدوات الإبلاغ والإدارة الرسمية."
   );
 });
 
-bot.catch((error) => {
-  console.error("Bot error:", error);
+// General messages during maintenance
+
+bot.on("message", async (ctx) => {
+  if (ctx.from.id === OWNER_ID) return;
+
+  if (maintenance) {
+    return maintenanceReply(ctx);
+  }
+});
+
+bot.catch((err) => {
+  console.error("Bot error:", err);
 });
 
 bot.start();
 
-console.log("Telegram bot is running.");
+console.log("Bot is running!");
