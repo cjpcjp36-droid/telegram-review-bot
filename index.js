@@ -1,8 +1,8 @@
 
 const { Bot, InlineKeyboard, Keyboard } = require("grammy");
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const OWNER_ID = Number(process.env.OWNER_ID);
+const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.TOKEN;
+const OWNER_ID = Number(process.env.OWNER_ID || process.env.OWNERID);
 
 if (!BOT_TOKEN || !OWNER_ID) {
   throw new Error("BOT_TOKEN or OWNER_ID is missing!");
