@@ -1,7 +1,12 @@
 
 const { Bot, InlineKeyboard, Keyboard } = require("grammy");
 
-const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.TOKEN;
+const BOT_TOKEN =
+  process.env.BOT_TOKEN ||
+  process.env.TELEGRAM_BOT_TOKEN ||
+  process.env.TELEGRAM_TOKEN ||
+  process.env.TOKEN;
+
 const OWNER_ID = Number(process.env.OWNER_ID || process.env.OWNERID);
 
 if (!BOT_TOKEN || !OWNER_ID) {
@@ -9,7 +14,6 @@ if (!BOT_TOKEN || !OWNER_ID) {
 }
 
 const bot = new Bot(BOT_TOKEN);
-
 const OWNER_USERNAME = "VILLENYOURPAPA";
 
 const CHANNELS = [
@@ -19,17 +23,17 @@ const CHANNELS = [
 ];
 
 let maintenance = false;
+
 const activity = new Map();
 const maintenanceNotified = new Set();
+const pending = new Map();
+const jobs = new Map();
 
 function userInfo(ctx) {
   const u = ctx.from;
-
   return {
     id: u.id,
-    name: [u.first_name, u.last_name]
-      .filter(Boolean)
-      .join(" "),
+    name: [u.first_name, u.last_name].filter(Boolean).join(" "),
     username: u.username ? `@${u.username}` : "No username"
   };
 }
@@ -47,9 +51,7 @@ async function notifyOwner(ctx, action) {
     record.last = now;
   }
 
-  const duration = Math.floor(
-    (record.last - record.first) / 1000
-  );
+  const duration = Math.floor((record.last - record.first) / 1000);
 
   const message =
     `🔔 User Activity\n\n` +
@@ -64,7 +66,7 @@ async function notifyOwner(ctx, action) {
   try {
     await bot.api.sendMessage(OWNER_ID, message);
   } catch (e) {
-    console.error("Notification error:", e.message);
+    console.error("Owner notification:", e.message);
   }
 }
 
@@ -76,22 +78,18 @@ async function checkJoined(ctx) {
         ctx.from.id
       );
 
-      if (
-        member.status === "left" ||
-        member.status === "kicked"
-      ) {
+      if (member.status === "left" || member.status === "kicked") {
         return false;
       }
     }
-
     return true;
   } catch (e) {
-    console.error("Join check error:", e.message);
+    console.error("Membership check:", e.message);
     return false;
   }
 }
 
-function joinButtons() {
+function joinKeyboard() {
   return new InlineKeyboard()
     .url("Join Channel 1", "https://t.me/villenxpapaof")
     .row()
@@ -99,7 +97,7 @@ function joinButtons() {
     .row()
     .url("Join Channel 3", "https://t.me/villenxpapabk")
     .row()
-    .text("✅ Verify Join", "verify_join");
+    .text("Verify Join", "verify_join");
 }
 
 function mainMenu() {
@@ -112,31 +110,33 @@ function mainMenu() {
     .resized();
 }
 
+function connectKeyboard(id) {
+  return new InlineKeyboard().text("Connect", `connect:${id}`);
+}
+
 async function maintenanceReply(ctx) {
   const u = userInfo(ctx);
 
-  // Avoid repeated maintenance alerts for the same user
   if (!maintenanceNotified.has(u.id)) {
     maintenanceNotified.add(u.id);
     await notifyOwner(ctx, "Tried to use bot during maintenance");
   }
 
   return ctx.reply(
-    "🛠️ Bot is under maintenance.\n\nPlease contact our owner.",
+    "Bot is under maintenance. Please contact our owner.",
     {
-      reply_markup: new InlineKeyboard()
-        .url(
-          "📞 Contact Owner",
-          `https://t.me/${OWNER_USERNAME}`
-        )
+      reply_markup: new InlineKeyboard().url(
+        "Contact Owner",
+        `https://t.me/${OWNER_USERNAME}`
+      )
     }
   );
 }
 
-async function showJoinMessage(ctx) {
+async function showJoin(ctx) {
   return ctx.reply(
-    "📢 Join all 3 channels to continue.",
-    { reply_markup: joinButtons() }
+    "Please join all three channels to continue.",
+    { reply_markup: joinKeyboard() }
   );
 }
 
@@ -147,53 +147,74 @@ async function showMenu(ctx) {
   );
 }
 
+const options = {
+  "Number Temporary Ban": {
+    id: "nt",
+    type: "number",
+    title: "Number Temporary Ban"
+  },
+  "Number Permanent Ban": {
+    id: "np",
+    type: "number",
+    title: "Number Permanent Ban"
+  },
+  "Group Suspend Temporary": {
+    id: "gt",
+    type: "group",
+    title: "Group Suspend Temporary"
+  },
+  "Group Suspend Permanent": {
+    id: "gp",
+    type: "group",
+    title: "Group Suspend Permanent"
+  }
+};
+
+// START
+
 bot.command("start", async (ctx) => {
   if (ctx.from.id === OWNER_ID) {
     return ctx.reply(
-      `👑 Owner Panel\n\nMaintenance: ${maintenance ? "ON" : "OFF"}\n\n` +
+      `Owner Panel\n\nMaintenance: ${maintenance ? "ON" : "OFF"}\n\n` +
       "/maintenance_on\n" +
       "/maintenance_off"
     );
   }
 
-  if (maintenance) {
-    return maintenanceReply(ctx);
-  }
+  if (maintenance) return maintenanceReply(ctx);
 
   await notifyOwner(ctx, "/start");
 
-  if (!(await checkJoined(ctx))) {
-    return showJoinMessage(ctx);
-  }
+  if (!(await checkJoined(ctx))) return showJoin(ctx);
 
   return showMenu(ctx);
 });
 
-// Owner-only maintenance controls
+// OWNER MAINTENANCE
 
 bot.command("maintenance_on", async (ctx) => {
   if (ctx.from.id !== OWNER_ID) {
-    return ctx.reply("⛔ Owner only.");
+    return ctx.reply("Owner only.");
   }
 
   maintenance = true;
   maintenanceNotified.clear();
 
-  return ctx.reply("🛠️ Maintenance is ON.");
+  return ctx.reply("Maintenance is ON.");
 });
 
 bot.command("maintenance_off", async (ctx) => {
   if (ctx.from.id !== OWNER_ID) {
-    return ctx.reply("⛔ Owner only.");
+    return ctx.reply("Owner only.");
   }
 
   maintenance = false;
   maintenanceNotified.clear();
 
-  return ctx.reply("✅ Maintenance is OFF.");
+  return ctx.reply("Maintenance is OFF.");
 });
 
-// Join verification
+// JOIN VERIFICATION
 
 bot.callbackQuery("verify_join", async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -203,50 +224,114 @@ bot.callbackQuery("verify_join", async (ctx) => {
   }
 
   if (!(await checkJoined(ctx))) {
-    return ctx.reply("❌ You haven't joined all channels yet.");
+    return ctx.reply("Please join all three channels first.");
   }
 
   await notifyOwner(ctx, "Verified channel membership");
-
   return showMenu(ctx);
 });
 
-// Four menu options
+// MENU SELECTION
 
-const menuOptions = [
-  "Number Temporary Ban",
-  "Number Permanent Ban",
-  "Group Suspend Temporary",
-  "Group Suspend Permanent"
-];
-
-bot.hears(menuOptions, async (ctx) => {
+bot.hears(Object.keys(options), async (ctx) => {
   if (ctx.from.id !== OWNER_ID && maintenance) {
     return maintenanceReply(ctx);
   }
 
-  if (ctx.from.id !== OWNER_ID) {
-    await notifyOwner(ctx, `Selected: ${ctx.message.text}`);
-
-    if (!(await checkJoined(ctx))) {
-      return showJoinMessage(ctx);
-    }
+  if (ctx.from.id !== OWNER_ID && !(await checkJoined(ctx))) {
+    return showJoin(ctx);
   }
 
+  const selected = options[ctx.message.text];
+
+  await notifyOwner(ctx, `Selected menu: ${selected.title}`);
+
+  pending.set(ctx.from.id, selected);
+
+  if (selected.type === "number") {
+    return ctx.reply(
+      "Please enter the number with country code."
+    );
+  }
+
+  return ctx.reply("Please enter your group link.");
+});
+
+// USER INPUT
+
+bot.on("message:text", async (ctx) => {
+  if (ctx.from.id === OWNER_ID) return;
+
+  if (maintenance) return maintenanceReply(ctx);
+
+  const selected = pending.get(ctx.from.id);
+
+  if (!selected) return;
+
+  if (!(await checkJoined(ctx))) {
+    pending.delete(ctx.from.id);
+    return showJoin(ctx);
+  }
+
+  const input = ctx.message.text.trim();
+
+  if (input.startsWith("/")) return;
+
+  const taskId = `${selected.id}_${ctx.from.id}`;
+
+  jobs.set(taskId, {
+    ...selected,
+    input,
+    userId: ctx.from.id
+  });
+
+  pending.delete(ctx.from.id);
+
+  await notifyOwner(ctx, `Submitted input for ${selected.title}`);
+
   return ctx.reply(
-    "تنبيه: لا يستطيع هذا البوت تنفيذ حظر الأرقام أو تعليق مجموعات واتساب مباشرةً. يُرجى استخدام أدوات الإبلاغ والإدارة الرسمية."
+    "Your input has been received.",
+    { reply_markup: connectKeyboard(taskId) }
   );
 });
 
-// General messages during maintenance
+// CONNECT - DEMO ONLY
 
-bot.on("message", async (ctx) => {
-  if (ctx.from.id === OWNER_ID) return;
+bot.callbackQuery(/^connect:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
 
-  if (maintenance) {
+  if (maintenance && ctx.from.id !== OWNER_ID) {
     return maintenanceReply(ctx);
   }
+
+  const taskId = ctx.match[1];
+  const task = jobs.get(taskId);
+
+  if (!task || task.userId !== ctx.from.id) {
+    return ctx.reply("Session expired. Please start again.");
+  }
+
+  await notifyOwner(ctx, `Connect clicked: ${task.title}`);
+
+  await ctx.reply("Please wait 2 minutes...");
+
+  // DEMONSTRATION ONLY; NO REAL ENFORCEMENT.
+  const delay = 20000 + Math.floor(Math.random() * 20000);
+
+  await new Promise(resolve => setTimeout(resolve, delay));
+
+  await ctx.reply("Your process was started.");
+
+  await new Promise(resolve => setTimeout(resolve, 10000));
+
+  await ctx.reply(
+    "your free pack is over. Please contact the owner for further assistance.",
+  );
+
+  jobs.delete(taskId);
 });
+
+// ERRORS
 
 bot.catch((err) => {
   console.error("Bot error:", err);
@@ -255,3 +340,4 @@ bot.catch((err) => {
 bot.start();
 
 console.log("Bot is running!");
+
